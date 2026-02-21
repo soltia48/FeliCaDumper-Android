@@ -210,8 +210,8 @@ private fun SystemNode(
         leadingIcon = Icons.Default.Storage,
     ) {
         DetailLine(label = "PMm", value = system.pmm, monospace = true)
-        system.idi?.let { DetailLine(label = "IDI", value = it, monospace = true) }
-        system.pmi?.let { DetailLine(label = "PMI", value = it, monospace = true) }
+        system.idi?.let { DetailLine(label = "IDi", value = it, monospace = true) }
+        system.pmi?.let { DetailLine(label = "PMi", value = it, monospace = true) }
         system.systemKey?.let { key ->
             DetailLine(
                 label = "System Key",
