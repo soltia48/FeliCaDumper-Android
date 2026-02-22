@@ -1,5 +1,6 @@
 package ws.nyaa.felicadumper
 
+import android.annotation.SuppressLint
 import ws.nyaa.felicadumper.felica_standard.FelicaProtocolException
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -64,24 +65,29 @@ private fun xorBlocks(a: ByteArray, b: ByteArray): ByteArray {
     return out
 }
 
+@SuppressLint("GetInstance")
 fun encryptDesBlock(data: ByteArray, key: ByteArray): ByteArray {
     if (data.size != DES_BLOCK_SIZE || key.size != DES_BLOCK_SIZE) {
         throw FelicaProtocolException("DES block encryption requires 8-byte data and key")
     }
+    // FeliCa mutual authentication requires single-block DES in ECB mode.
     val cipher = Cipher.getInstance("DES/ECB/NoPadding")
     cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "DES"))
     return cipher.doFinal(data)
 }
 
+@SuppressLint("GetInstance")
 fun decryptDesBlock(data: ByteArray, key: ByteArray): ByteArray {
     if (data.size != DES_BLOCK_SIZE || key.size != DES_BLOCK_SIZE) {
         throw FelicaProtocolException("DES block decryption requires 8-byte data and key")
     }
+    // FeliCa mutual authentication requires single-block DES in ECB mode.
     val cipher = Cipher.getInstance("DES/ECB/NoPadding")
     cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "DES"))
     return cipher.doFinal(data)
 }
 
+@SuppressLint("GetInstance")
 fun encrypt3DesBlock(data: ByteArray, key1: ByteArray, key2: ByteArray): ByteArray {
     if (data.size != DES_BLOCK_SIZE || key1.size != DES_BLOCK_SIZE || key2.size != DES_BLOCK_SIZE) {
         throw FelicaProtocolException("3DES block encryption requires 8-byte data and keys")
@@ -90,11 +96,13 @@ fun encrypt3DesBlock(data: ByteArray, key1: ByteArray, key2: ByteArray): ByteArr
     key1.copyInto(tripleKey, 0)
     key2.copyInto(tripleKey, 8)
     key1.copyInto(tripleKey, 16)
+    // FeliCa authentication derivation uses 3DES EDE on a single block.
     val cipher = Cipher.getInstance("DESede/ECB/NoPadding")
     cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(tripleKey, "DESede"))
     return cipher.doFinal(data)
 }
 
+@SuppressLint("GetInstance")
 fun decrypt3DesBlock(data: ByteArray, key1: ByteArray, key2: ByteArray): ByteArray {
     if (data.size != DES_BLOCK_SIZE || key1.size != DES_BLOCK_SIZE || key2.size != DES_BLOCK_SIZE) {
         throw FelicaProtocolException("3DES block decryption requires 8-byte data and keys")
@@ -103,6 +111,7 @@ fun decrypt3DesBlock(data: ByteArray, key1: ByteArray, key2: ByteArray): ByteArr
     key1.copyInto(tripleKey, 0)
     key2.copyInto(tripleKey, 8)
     key1.copyInto(tripleKey, 16)
+    // FeliCa authentication derivation uses 3DES EDE on a single block.
     val cipher = Cipher.getInstance("DESede/ECB/NoPadding")
     cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(tripleKey, "DESede"))
     return cipher.doFinal(data)

@@ -46,6 +46,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -92,7 +93,7 @@ fun KeyManagementScreen(
     onDeleteAllKeys: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selectedTab by rememberSaveable { mutableStateOf(0) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showDeleteAllDialog by rememberSaveable { mutableStateOf(false) }
     var pendingDeleteKey by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingDeleteEntry by remember { mutableStateOf<PersistedKeyEntry?>(null) }
