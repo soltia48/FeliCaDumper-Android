@@ -1,5 +1,6 @@
 package ws.nyaa.felicadumper
 
+import androidx.annotation.Keep
 import com.google.gson.Gson
 import java.io.File
 import java.util.Locale
@@ -7,6 +8,7 @@ import java.util.Locale
 private const val KEY_LENGTH_BYTES = 8
 private const val IDM_LENGTH = 8
 
+@Keep
 private data class JsonlKeyRecord(
     val system_code: String?,
     val node: String?,
