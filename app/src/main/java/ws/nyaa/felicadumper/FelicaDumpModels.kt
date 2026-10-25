@@ -6,22 +6,24 @@ typealias NodeKeys = Map<Int, ByteArray>
 typealias IdmScopedKeys = Map<String, NodeKeys>
 typealias SystemKeys = Map<Int, IdmScopedKeys>
 
-@Keep
+// In-memory dump tree used by the UI. The file format is defined separately in DumpExport.kt.
 data class DumpOutput(
-    val reader: ReaderInfo,
+    val device: DeviceInfo,
     val systems: List<SystemSummary>,
-    val warnings: List<String>,
+    val warnings: List<DumpWarning>,
     val generatedAtEpochMs: Long,
 )
 
-@Keep
-data class ReaderInfo(
-    val vendor: String,
-    val product: String,
-    val chipset: String,
+data class DeviceInfo(
+    val manufacturer: String,
+    val model: String,
 )
 
-@Keep
+data class DumpWarning(
+    val node: Int? = null,
+    val message: String,
+)
+
 data class SystemSummary(
     val idm: String,
     val pmm: String,
@@ -31,10 +33,9 @@ data class SystemSummary(
     val systemKey: KeyVersionSummary?,
     val systemServices: List<ServiceGroupSummary>,
     val areas: List<AreaNode>,
-    val warnings: List<String>,
+    val warnings: List<DumpWarning>,
 )
 
-@Keep
 data class AreaNode(
     val areaCodeRaw: Int,
     val areaCodeHex: String,
@@ -43,22 +44,25 @@ data class AreaNode(
     val children: MutableList<AreaChild>,
 )
 
-@Keep
 data class AreaChild(
     val kind: String,
     val area: AreaNode? = null,
     val serviceGroup: ServiceGroupSummary? = null,
 )
 
-@Keep
 data class ServiceGroupSummary(
     val number: Int,
     val numberHex: String,
     val services: MutableList<ServiceSummary>,
-    var blocks: List<String>?,
+    var blocks: BlockData?,
 )
 
-@Keep
+data class BlockData(
+    val serviceCodeRaw: Int,
+    val authenticated: Boolean,
+    val blocks: List<String>,
+)
+
 data class ServiceSummary(
     val serviceCodeRaw: Int,
     val attributesRaw: Int,
@@ -69,7 +73,6 @@ data class ServiceSummary(
     var keyVersion: KeyVersionSummary?,
 )
 
-@Keep
 data class KeyVersionSummary(
     val aesKeyVersionHex: String?,
     val desKeyVersionHex: String?,

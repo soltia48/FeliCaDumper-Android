@@ -35,7 +35,7 @@ object FelicaDumpEngine {
     @Throws(IOException::class)
     fun dump(tag: Tag, keyStore: SystemKeys? = null): DumpOutput {
         val nfcF = NfcF.get(tag) ?: throw IOException("NfcF tech is not available for this tag")
-        val warnings = mutableListOf<String>()
+        val warnings = mutableListOf<DumpWarning>()
 
         try {
             nfcF.connect()
@@ -43,7 +43,7 @@ object FelicaDumpEngine {
 
             val initialPolling = runCatching { polling(nfcF, ALL_SYSTEMS_CODE) }
                 .getOrElse { error ->
-                    warnings += "Polling ${hexU16(ALL_SYSTEMS_CODE)} failed: ${error.message}"
+                    warnings += DumpWarning(message = "Polling ${hexU16(ALL_SYSTEMS_CODE)} failed: ${error.message}")
                     null
                 }
 
@@ -53,7 +53,7 @@ object FelicaDumpEngine {
             for (systemCode in systemCodes.distinct()) {
                 val summary = runCatching { summarizeSystem(nfcF, systemCode, keyStore) }
                     .getOrElse { error ->
-                        warnings += "Failed to dump system ${hexU16(systemCode)}: ${error.message}"
+                        warnings += DumpWarning(message = "Failed to dump system ${hexU16(systemCode)}: ${error.message}")
                         null
                     }
                 if (summary != null) {
@@ -62,10 +62,9 @@ object FelicaDumpEngine {
             }
 
             return DumpOutput(
-                reader = ReaderInfo(
-                    vendor = Build.MANUFACTURER,
-                    product = Build.MODEL,
-                    chipset = "android.nfc.tech.NfcF",
+                device = DeviceInfo(
+                    manufacturer = Build.MANUFACTURER,
+                    model = Build.MODEL,
                 ),
                 systems = systems,
                 warnings = warnings,
@@ -79,13 +78,13 @@ object FelicaDumpEngine {
     private fun discoverSystemCodes(
         nfcF: NfcF,
         idmFromPolling: ByteArray?,
-        warnings: MutableList<String>,
+        warnings: MutableList<DumpWarning>,
     ): List<Int> {
         val idm = idmFromPolling ?: nfcF.tag.id.takeIf { it.size == IDM_LENGTH }
         if (idm != null) {
             val requested = runCatching { requestSystemCode(nfcF, idm) }
                 .getOrElse { error ->
-                    warnings += "Request System Code failed: ${error.message}"
+                    warnings += DumpWarning(message = "Request System Code failed: ${error.message}")
                     emptyList()
                 }
             if (requested.isNotEmpty()) {
@@ -98,7 +97,7 @@ object FelicaDumpEngine {
             return listOf(fromTag)
         }
 
-        warnings += "System code discovery failed; fallback to ${hexU16(ALL_SYSTEMS_CODE)}"
+        warnings += DumpWarning(message = "System code discovery failed; fallback to ${hexU16(ALL_SYSTEMS_CODE)}")
         return listOf(ALL_SYSTEMS_CODE)
     }
 
@@ -127,7 +126,7 @@ object FelicaDumpEngine {
     ): SystemSummary {
         val polling = polling(nfcF, systemCode)
         val idmHex = polling.idm.toHexUpper()
-        val warnings = mutableListOf<String>()
+        val warnings = mutableListOf<DumpWarning>()
         val keyRequestCodes = mutableListOf<Int>()
         val seenCodes = mutableSetOf<Int>()
 
@@ -163,7 +162,7 @@ object FelicaDumpEngine {
                 warnings = warnings,
             )
         }.onFailure { error ->
-            warnings += "Reading plaintext blocks failed for ${hexU16(systemCode)}: ${error.message}"
+            warnings += DumpWarning(message = "Reading plaintext blocks failed for ${hexU16(systemCode)}: ${error.message}")
         }
 
         val cardKeys = keyStore?.let { resolveKeysForCard(it, systemCode, idmHex) }
@@ -178,12 +177,12 @@ object FelicaDumpEngine {
                 warnings = warnings,
             )
         } else if (keyStore != null) {
-            warnings += "No external keys available for ${hexU16(systemCode)} and IDm $idmHex"
+            warnings += DumpWarning(message = "No external keys available for ${hexU16(systemCode)} and IDm $idmHex")
         }
 
         if (keyVersions.isNotEmpty()) {
             val unknownCodes = keyVersions.keys.sorted().joinToString(", ") { hexU16(it) }
-            warnings += "Key versions returned for unknown codes: [$unknownCodes]"
+            warnings += DumpWarning(message = "Key versions returned for unknown codes: [$unknownCodes]")
         }
 
         return SystemSummary(
@@ -204,7 +203,7 @@ object FelicaDumpEngine {
         idm: ByteArray,
         keyRequestCodes: MutableList<Int>,
         seenCodes: MutableSet<Int>,
-        warnings: MutableList<String>,
+        warnings: MutableList<DumpWarning>,
     ): Pair<MutableList<AreaNode>, MutableList<ServiceGroupSummary>> {
         val areas = mutableListOf<AreaNode>()
         val systemServices = mutableListOf<ServiceGroupSummary>()
@@ -215,7 +214,10 @@ object FelicaDumpEngine {
                 null -> break@loop
                 is SearchServiceResult.Area -> {
                     if (index >= 0xFFFF) {
-                        warnings += "Directory index overflow while descending into ${hexU16(result.areaCode)}"
+                        warnings += DumpWarning(
+                            node = result.areaCode,
+                            message = "Directory index overflow while descending into the area",
+                        )
                         break@loop
                     }
                     val childIndex = index + 1
@@ -231,18 +233,21 @@ object FelicaDumpEngine {
                     )
                     areas += collected.area
                     if (collected.nextIndex <= index) {
-                        warnings += "Area traversal did not advance at ${hexU16(index)}"
+                        warnings += DumpWarning(message = "Area traversal did not advance at ${hexU16(index)}")
                         break@loop
                     }
                     index = collected.nextIndex
                 }
 
                 is SearchServiceResult.Service -> {
-                    warnings += "Service ${hexU16(result.serviceCodeRaw)} at index ${hexU16(index)} has no parent area"
+                    warnings += DumpWarning(
+                        node = result.serviceCodeRaw,
+                        message = "Service at index ${hexU16(index)} has no parent area",
+                    )
                     registerServiceCode(keyRequestCodes, seenCodes, result.serviceCodeRaw)
                     appendServiceGroup(systemServices, buildServiceSummary(result.serviceCodeRaw))
                     if (index >= 0xFFFF) {
-                        warnings += "Directory index overflow while reading system-level services"
+                        warnings += DumpWarning(message = "Directory index overflow while reading system-level services")
                         break@loop
                     }
                     index += 1
@@ -261,7 +266,7 @@ object FelicaDumpEngine {
         index: Int,
         keyRequestCodes: MutableList<Int>,
         seenCodes: MutableSet<Int>,
-        warnings: MutableList<String>,
+        warnings: MutableList<DumpWarning>,
     ): AreaCollectionResult {
         registerServiceCode(keyRequestCodes, seenCodes, areaCode)
 
@@ -281,11 +286,10 @@ object FelicaDumpEngine {
                     appendServiceChild(children, buildServiceSummary(serviceCodeRaw))
 
                     if (cursor >= 0xFFFF) {
-                        warnings += "Directory index overflow while traversing area ${
-                            hexU16(
-                                areaCode
-                            )
-                        }"
+                        warnings += DumpWarning(
+                            node = areaCode,
+                            message = "Directory index overflow while traversing the area",
+                        )
                         break@loop
                     }
                     cursor += 1
@@ -293,18 +297,20 @@ object FelicaDumpEngine {
 
                 is SearchServiceResult.Area -> {
                     if (result.endServiceCode < result.areaCode) {
-                        warnings += "Area ${hexU16(result.areaCode)} has invalid end code ${
-                            hexU16(
-                                result.endServiceCode
-                            )
-                        }"
+                        warnings += DumpWarning(
+                            node = result.areaCode,
+                            message = "Invalid end code ${hexU16(result.endServiceCode)}",
+                        )
                         break@loop
                     }
                     if (result.areaCode < areaCode || result.endServiceCode > endServiceCode) {
                         break@loop
                     }
                     if (cursor >= 0xFFFF) {
-                        warnings += "Directory index overflow while descending into ${hexU16(result.areaCode)}"
+                        warnings += DumpWarning(
+                            node = result.areaCode,
+                            message = "Directory index overflow while descending into the area",
+                        )
                         break@loop
                     }
 
@@ -320,7 +326,7 @@ object FelicaDumpEngine {
                     )
                     children += AreaChild(kind = "area", area = child.area)
                     if (child.nextIndex <= cursor) {
-                        warnings += "Child area traversal did not advance at index ${hexU16(cursor)}"
+                        warnings += DumpWarning(message = "Child area traversal did not advance at index ${hexU16(cursor)}")
                         break@loop
                     }
                     cursor = child.nextIndex
@@ -344,7 +350,7 @@ object FelicaDumpEngine {
         nfcF: NfcF,
         idm: ByteArray,
         keyRequestCodes: List<Int>,
-        warnings: MutableList<String>,
+        warnings: MutableList<DumpWarning>,
     ): MutableMap<Int, KeyVersionSummary> {
         val keyVersions = mutableMapOf<Int, KeyVersionSummary>()
         for (chunk in keyRequestCodes.chunked(MAX_SERVICE_CODES_PER_REQUEST)) {
@@ -356,10 +362,10 @@ object FelicaDumpEngine {
                     }
                 }
                 if (warning != null) {
-                    warnings += warning
+                    warnings += DumpWarning(message = warning)
                 }
             } catch (error: Exception) {
-                warnings += "Request Service failed: ${error.message}"
+                warnings += DumpWarning(message = "Request Service failed: ${error.message}")
             }
         }
         return keyVersions
@@ -382,7 +388,7 @@ object FelicaDumpEngine {
         idm: ByteArray,
         areas: List<AreaNode>,
         systemServices: List<ServiceGroupSummary>,
-        warnings: MutableList<String>,
+        warnings: MutableList<DumpWarning>,
     ) {
         val targets = mutableListOf<Int>()
         val seen = mutableSetOf<Int>()
@@ -400,11 +406,14 @@ object FelicaDumpEngine {
                     readResults[serviceCodeRaw] = blocks
                 }
             } catch (error: Exception) {
-                warnings += "Read Without Encryption failed for ${hexU16(serviceCodeRaw)}: ${error.message}"
+                warnings += DumpWarning(
+                    node = serviceCodeRaw,
+                    message = "Read Without Encryption failed: ${error.message}",
+                )
             }
         }
 
-        assignBlocks(areas, systemServices, readResults)
+        assignBlocks(areas, systemServices, readResults, authenticated = false)
     }
 
     private fun readAuthenticatedServices(
@@ -413,7 +422,7 @@ object FelicaDumpEngine {
         areas: List<AreaNode>,
         systemServices: List<ServiceGroupSummary>,
         keys: Map<Int, ByteArray>,
-        warnings: MutableList<String>,
+        warnings: MutableList<DumpWarning>,
     ): MutualAuthSummary? {
         val targets = mutableListOf<AuthReadTarget>()
         val seen = mutableSetOf<Int>()
@@ -434,11 +443,14 @@ object FelicaDumpEngine {
                     readResults[target.serviceCodeRaw] = result.blocks
                 }
             } catch (error: Exception) {
-                warnings += "Authenticated Read failed for ${hexU16(target.serviceCodeRaw)}: ${error.message}"
+                warnings += DumpWarning(
+                    node = target.serviceCodeRaw,
+                    message = "Authenticated Read failed: ${error.message}",
+                )
             }
         }
 
-        assignBlocks(areas, systemServices, readResults)
+        assignBlocks(areas, systemServices, readResults, authenticated = true)
         return mutualAuthSummary
     }
 
@@ -687,22 +699,27 @@ object FelicaDumpEngine {
         areas: List<AreaNode>,
         systemServices: List<ServiceGroupSummary>,
         results: MutableMap<Int, List<String>>,
+        authenticated: Boolean,
     ) {
         for (area in areas) {
-            assignBlocksInArea(area, results)
+            assignBlocksInArea(area, results, authenticated)
         }
         for (group in systemServices) {
-            assignBlocksInGroup(group, results)
+            assignBlocksInGroup(group, results, authenticated)
         }
     }
 
-    private fun assignBlocksInArea(area: AreaNode, results: MutableMap<Int, List<String>>) {
+    private fun assignBlocksInArea(
+        area: AreaNode,
+        results: MutableMap<Int, List<String>>,
+        authenticated: Boolean,
+    ) {
         for (child in area.children) {
             if (child.area != null) {
-                assignBlocksInArea(child.area, results)
+                assignBlocksInArea(child.area, results, authenticated)
             }
             if (child.serviceGroup != null) {
-                assignBlocksInGroup(child.serviceGroup, results)
+                assignBlocksInGroup(child.serviceGroup, results, authenticated)
             }
         }
     }
@@ -710,6 +727,7 @@ object FelicaDumpEngine {
     private fun assignBlocksInGroup(
         group: ServiceGroupSummary,
         results: MutableMap<Int, List<String>>,
+        authenticated: Boolean,
     ) {
         if (group.blocks != null) {
             return
@@ -717,7 +735,11 @@ object FelicaDumpEngine {
 
         for (service in group.services) {
             val blocks = results.remove(service.serviceCodeRaw) ?: continue
-            group.blocks = blocks
+            group.blocks = BlockData(
+                serviceCodeRaw = service.serviceCodeRaw,
+                authenticated = authenticated,
+                blocks = blocks,
+            )
             return
         }
     }

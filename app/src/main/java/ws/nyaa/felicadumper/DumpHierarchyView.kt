@@ -1,7 +1,6 @@
 package ws.nyaa.felicadumper
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -12,10 +11,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -29,20 +30,17 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
@@ -55,12 +53,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 private const val UI_HIERARCHY_INDENT_DP = 6
 
@@ -94,40 +98,8 @@ internal fun DumpHierarchyView(
             modifier = Modifier.fillMaxSize(),
             state = listState,
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(vertical = 2.dp),
+            contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 88.dp),
         ) {
-            item(key = "reader") {
-                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Memory,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                text = "Reader",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                            )
-                        }
-                        Text(
-                            text = "${dump.reader.vendor} ${dump.reader.product}",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            text = dump.reader.chipset,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                }
-            }
-
             if (dump.warnings.isNotEmpty()) {
                 item(key = "root:warnings") {
                     ExpandableCard(
@@ -135,13 +107,9 @@ internal fun DumpHierarchyView(
                         stateKey = "root:warnings",
                         defaultExpanded = true,
                         leadingIcon = Icons.Default.Warning,
+                        leadingIconTint = MaterialTheme.colorScheme.error,
                     ) {
-                        dump.warnings.forEach { warning ->
-                            Text(
-                                text = "• $warning",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
+                        WarningList(dump.warnings)
                     }
                 }
             }
@@ -159,8 +127,9 @@ internal fun DumpHierarchyView(
             if (dump.systems.isEmpty()) {
                 item(key = "systems:empty") {
                     Text(
-                        text = "No systems found.",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "No systems found",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -170,7 +139,7 @@ internal fun DumpHierarchyView(
             visible = showScrollTop,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(12.dp),
+                .padding(16.dp),
         ) {
             FloatingActionButton(
                 onClick = {
@@ -201,68 +170,49 @@ private fun SystemNode(
     stateKey: String,
     onOpenServiceGroup: (ServiceGroupDetailDialogState) -> Unit,
 ) {
-    val systemLabel = "System ${system.systemCodeHex}"
     ExpandableCard(
-        title = systemLabel,
+        title = "System ${system.systemCodeHex}",
         subtitle = "IDm ${system.idm}",
         stateKey = stateKey,
         defaultExpanded = true,
         leadingIcon = Icons.Default.Storage,
     ) {
-        DetailLine(label = "PMm", value = system.pmm, monospace = true)
-        system.idi?.let { DetailLine(label = "IDi", value = it, monospace = true) }
-        system.pmi?.let { DetailLine(label = "PMi", value = it, monospace = true) }
-        system.systemKey?.let { key ->
-            DetailLine(
-                label = "System Key",
-                value = formatKeyVersion(key),
-                monospace = true,
+        DetailTable(
+            rows = listOfNotNull(
+                "PMm" to system.pmm,
+                system.idi?.let { "IDi" to it },
+                system.pmi?.let { "PMi" to it },
+                system.systemKey?.let { "Key version" to formatKeyVersion(it) },
+            ),
+        )
+
+        system.systemServices.forEach { group ->
+            ServiceGroupNode(
+                group = group,
+                level = 1,
+                onOpenServiceGroup = onOpenServiceGroup,
             )
         }
 
-        if (system.systemServices.isNotEmpty()) {
-            SectionHeader(
-                text = "System Services",
-                leadingIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
+        system.areas.forEachIndexed { index, area ->
+            AreaNodeView(
+                area = area,
+                stateKey = "$stateKey:area:$index:${area.areaCodeHex}",
+                level = 1,
+                onOpenServiceGroup = onOpenServiceGroup,
             )
-            system.systemServices.forEachIndexed { _, group ->
-                ServiceGroupNode(
-                    group = group,
-                    level = 1,
-                    onOpenServiceGroup = onOpenServiceGroup,
-                )
-            }
-        }
-
-        if (system.areas.isNotEmpty()) {
-            SectionHeader(
-                text = "Areas",
-                leadingIcon = Icons.Default.Folder,
-            )
-            system.areas.forEachIndexed { index, area ->
-                AreaNodeView(
-                    area = area,
-                    stateKey = "$stateKey:area:$index:${area.areaCodeHex}",
-                    level = 1,
-                    onOpenServiceGroup = onOpenServiceGroup,
-                )
-            }
         }
 
         if (system.warnings.isNotEmpty()) {
             ExpandableCard(
-                title = "System Warnings",
+                title = "Warnings",
                 stateKey = "$stateKey:warnings",
                 defaultExpanded = false,
                 level = 1,
                 leadingIcon = Icons.Default.Warning,
+                leadingIconTint = MaterialTheme.colorScheme.error,
             ) {
-                system.warnings.forEach { warning ->
-                    Text(
-                        text = "• $warning",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
+                WarningList(system.warnings)
             }
         }
     }
@@ -276,19 +226,14 @@ private fun AreaNodeView(
     onOpenServiceGroup: (ServiceGroupDetailDialogState) -> Unit,
 ) {
     ExpandableCard(
-        title = "Area ${area.areaCodeHex}",
-        subtitle = "range ${area.areaCodeHex} .. ${area.endServiceCodeHex}",
+        title = "Area ${area.areaCodeHex}\u2013${area.endServiceCodeHex}",
         stateKey = stateKey,
         defaultExpanded = level < 1,
         level = level,
         leadingIcon = Icons.Default.Folder,
     ) {
         area.keyVersion?.let { version ->
-            DetailLine(
-                label = "Area Key",
-                value = formatKeyVersion(version),
-                monospace = true,
-            )
+            DetailTable(rows = listOf("Key version" to formatKeyVersion(version)))
         }
         area.children.forEachIndexed { index, child ->
             child.area?.let {
@@ -323,8 +268,8 @@ private fun ServiceGroupNode(
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = (level * UI_HIERARCHY_INDENT_DP).dp)
-            .clickable { onOpenServiceGroup(detail) },
+            .padding(start = (level * UI_HIERARCHY_INDENT_DP).dp),
+        onClick = { onOpenServiceGroup(detail) },
         shape = RoundedCornerShape(hierarchyCornerSize(level)),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(
@@ -334,24 +279,28 @@ private fun ServiceGroupNode(
             )
         ),
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    text = detail.title,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                )
-            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = detail.title,
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -367,74 +316,38 @@ private fun ServiceGroupDetailsDialog(
     detail: ServiceGroupDetailDialogState,
     onDismissRequest: () -> Unit,
 ) {
-    val scrollState = rememberScrollState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
     ) {
-        Surface(
-            modifier = Modifier.fillMaxHeight(0.92f),
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-            tonalElevation = 0.dp,
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
+            Text(
+                text = detail.title,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.semantics { heading() },
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                detail.group.services.forEach { service ->
+                    ServiceSummaryRow(service = service)
+                }
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+            val blocks = detail.group.blocks?.blocks
+            if (blocks.isNullOrEmpty()) {
                 Text(
-                    text = detail.title,
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                    text = "No blocks were read",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-
-                HorizontalDivider()
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    SectionHeader(
-                        text = "Services",
-                        leadingIcon = Icons.AutoMirrored.Filled.InsertDriveFile,
-                    )
-                    detail.group.services.forEach { service ->
-                        ServiceSummaryRow(service = service)
-                    }
-
-                    SectionHeader(
-                        text = "Block Data",
-                        leadingIcon = Icons.Default.Storage,
-                    )
-                    val blocks = detail.group.blocks
-                    if (blocks.isNullOrEmpty()) {
-                        Text(
-                            text = "No block data was retrieved for this service group.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        SelectionContainer {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                blocks.forEachIndexed { index, block ->
-                                    BlockRow(index = index, block = block)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(onClick = onDismissRequest) {
-                        Text("Close")
-                    }
-                }
+            } else {
+                BlockTable(blocks = blocks)
             }
         }
     }
@@ -448,6 +361,7 @@ private fun ExpandableCard(
     defaultExpanded: Boolean,
     level: Int = 0,
     leadingIcon: ImageVector? = null,
+    leadingIconTint: Color = MaterialTheme.colorScheme.primary,
     content: @Composable () -> Unit,
 ) {
     var expanded by rememberSaveable(stateKey) { mutableStateOf(defaultExpanded) }
@@ -466,8 +380,11 @@ private fun ExpandableCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = !expanded }
-                .animateContentSize()
+                .clickable(
+                    role = Role.Button,
+                    onClickLabel = if (expanded) "Collapse" else "Expand",
+                ) { expanded = !expanded }
+                .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -476,7 +393,7 @@ private fun ExpandableCard(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = leadingIconTint,
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -487,7 +404,8 @@ private fun ExpandableCard(
                 subtitle?.let {
                     Text(
                         text = it,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -497,7 +415,7 @@ private fun ExpandableCard(
                 } else {
                     Icons.AutoMirrored.Filled.KeyboardArrowRight
                 },
-                contentDescription = if (expanded) "Collapse" else "Expand",
+                contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -509,10 +427,9 @@ private fun ExpandableCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                HorizontalDivider()
                 content()
             }
         }
@@ -520,92 +437,69 @@ private fun ExpandableCard(
 }
 
 @Composable
-private fun SectionHeader(
-    text: String,
-    leadingIcon: ImageVector? = null,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        leadingIcon?.let { icon ->
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun WarningList(warnings: List<DumpWarning>) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        warnings.forEach { warning ->
+            Text(
+                text = warning.node?.let { "${hexCode(it)} ${warning.message}" } ?: warning.message,
+                style = MaterialTheme.typography.bodySmall,
             )
         }
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-        )
     }
 }
 
+private fun hexCode(value: Int): String = String.format(Locale.US, "0x%04X", value and 0xFFFF)
+
 @Composable
-private fun DetailLine(
-    label: String,
-    value: String,
-    monospace: Boolean = false,
-) {
-    Text(
-        text = "$label: $value",
-        style = if (monospace) {
-            MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-        } else {
-            MaterialTheme.typography.bodySmall
-        },
-    )
+private fun DetailTable(rows: List<Pair<String, String>>) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        rows.forEach { (label, value) ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(80.dp),
+                )
+                SelectionContainer(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = value,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
 private fun ServiceSummaryRow(service: ServiceSummary) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(12.dp),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    text = "Service ${service.codeHex}",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.SemiBold,
-                        fontFamily = FontFamily.Monospace,
-                    ),
-                )
-            }
-            service.attributesDescription?.let { description ->
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
             Text(
-                text = "number: ${service.number}",
+                text = service.codeHex,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                ),
+            )
+            Text(
+                text = service.attributesDescription ?: "Attributes ${service.attributesHex}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
-                text = "attributes: ${service.attributesHex}",
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-            )
             service.keyVersion?.let { keyVersion ->
                 Text(
-                    text = "keyVersion: ${formatKeyVersion(keyVersion)}",
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    text = "Key version ${formatKeyVersion(keyVersion)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -613,23 +507,32 @@ private fun ServiceSummaryRow(service: ServiceSummary) {
 }
 
 @Composable
-private fun BlockRow(index: Int, block: String) {
+private fun BlockTable(blocks: List<String>) {
+    val indexDigits = (blocks.size - 1).toString().length.coerceAtLeast(2)
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
-        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(12.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = "[${index.toString().padStart(4, '0')}] $block",
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-            )
+        SelectionContainer {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                blocks.forEachIndexed { index, block ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = index.toString().padStart(indexDigits, '0'),
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = block,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        )
+                    }
+                }
+            }
         }
     }
 }

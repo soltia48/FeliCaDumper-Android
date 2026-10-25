@@ -1,20 +1,21 @@
 package ws.nyaa.felicadumper
 
+import android.content.Intent
 import android.net.Uri
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewModelScope
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -23,9 +24,6 @@ import ws.nyaa.felicadumper.ui.theme.FeliCaDumperTheme
 import java.io.File
 import java.io.IOException
 import java.util.Locale
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     private val gson = GsonBuilder()
@@ -35,45 +33,42 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     private val compactGson = GsonBuilder()
         .disableHtmlEscaping()
         .create()
-    private val reading = AtomicBoolean(false)
-    private val lastSuccessfulTagId = AtomicReference<String?>(null)
-    private val lastSuccessfulReadAtMs = AtomicLong(0L)
+    private val state: MainViewModel by viewModels()
+    private val reading get() = state.reading
+    private val lastSuccessfulTagId get() = state.lastSuccessfulTagId
+    private val lastSuccessfulReadAtMs get() = state.lastSuccessfulReadAtMs
 
     private var nfcAdapter: NfcAdapter? = null
-    private var appScreen by mutableStateOf(AppScreen.DUMP)
-    private var keyStore: SystemKeys? = null
-    private var loadedKeyPath: String? = null
-    private var keyLoadWarnings: List<String> = emptyList()
-    private var pendingExportJson: String? = null
-    private var pendingKeyExportJsonl: String? = null
+    private var appScreen
+        get() = state.appScreen
+        set(value) { state.appScreen = value }
+    private var keyStore
+        get() = state.keyStore
+        set(value) { state.keyStore = value }
+    private var keyLoadWarnings
+        get() = state.keyLoadWarnings
+        set(value) { state.keyLoadWarnings = value }
+    private var pendingExportJson
+        get() = state.pendingExportJson
+        set(value) { state.pendingExportJson = value }
+    private var pendingKeyExportJsonl
+        get() = state.pendingKeyExportJsonl
+        set(value) { state.pendingKeyExportJsonl = value }
     private val importKeyLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) {
                 return@registerForActivityResult
             }
-            lifecycleScope.launch {
-                uiState = uiState.copy(status = "Importing key file...")
+            state.viewModelScope.launch {
                 val result = withContext(Dispatchers.IO) {
                     runCatching { importKeyStore(uri) }
                 }
                 result.onSuccess { loaded ->
                     keyStore = loaded.keys.takeIf { it.isNotEmpty() }
                     keyLoadWarnings = loaded.warnings
-                    uiState = uiState.copy(
-                        status = "Key file imported.",
-                        dumpText = waitingText(),
-                        dump = null,
-                    )
+                    showNotice("Keys imported")
                 }.onFailure { error ->
-                    uiState = uiState.copy(
-                        status = "Failed to import key file.",
-                        dumpText = buildString {
-                            appendLine("Error: ${error.message ?: "unknown"}")
-                            appendLine()
-                            append(waitingText())
-                        },
-                        dump = null,
-                    )
+                    showNotice("Unable to import keys. ${error.message.orEmpty()}".trim())
                 }
             }
         }
@@ -82,24 +77,17 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     ) { uri ->
         val json = pendingExportJson
         pendingExportJson = null
-        if (uri == null) {
-            uiState = uiState.copy(status = "JSON export canceled.")
+        if (uri == null || json == null) {
             return@registerForActivityResult
         }
-        if (json == null) {
-            uiState = uiState.copy(status = "No JSON available to save.")
-            return@registerForActivityResult
-        }
-        lifecycleScope.launch {
-            uiState = uiState.copy(status = "Saving JSON...")
+        state.viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching { exportDumpJson(uri, json) }
             }
-            result.onSuccess { location ->
-                uiState = uiState.copy(status = "JSON saved: $location")
+            result.onSuccess {
+                showNotice("Dump saved")
             }.onFailure { error ->
-                uiState =
-                    uiState.copy(status = "Failed to save JSON: ${error.message ?: "unknown"}")
+                showNotice("Unable to save the dump. ${error.message.orEmpty()}".trim())
             }
         }
     }
@@ -108,45 +96,37 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     ) { uri ->
         val jsonl = pendingKeyExportJsonl
         pendingKeyExportJsonl = null
-        if (uri == null) {
-            uiState = uiState.copy(status = "Key file export canceled.")
+        if (uri == null || jsonl == null) {
             return@registerForActivityResult
         }
-        if (jsonl == null) {
-            uiState = uiState.copy(status = "No keys available to save.")
-            return@registerForActivityResult
-        }
-        lifecycleScope.launch {
-            uiState = uiState.copy(status = "Saving key file...")
+        state.viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching { exportDumpJson(uri, jsonl) }
             }
-            result.onSuccess { location ->
-                uiState = uiState.copy(status = "Key file saved: $location")
+            result.onSuccess {
+                showNotice("Keys exported")
             }.onFailure { error ->
-                uiState = uiState.copy(
-                    status = "Failed to save key file: ${error.message ?: "unknown"}"
-                )
+                showNotice("Unable to export keys. ${error.message.orEmpty()}".trim())
             }
         }
     }
-    private var uiState by mutableStateOf(
-        DumpUiState(
-            status = "Hold an NFC-F card near the device.",
-            dumpText = "Waiting...",
-            isReading = false,
-            dump = null,
-        )
-    )
+    private var uiState
+        get() = state.uiState
+        set(value) { state.uiState = value }
+    private var notice
+        get() = state.notice
+        set(value) { state.notice = value }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
-        val loadedKeys = loadKeyStore()
-        keyStore = loadedKeys.keys.takeIf { it.isNotEmpty() }
-        keyLoadWarnings = loadedKeys.warnings
-        uiState = uiState.copy(status = initialStatusText())
-        uiState = uiState.copy(dumpText = waitingText())
+        if (!state.keysLoaded) {
+            val loadedKeys = loadKeyStore()
+            keyStore = loadedKeys.keys.takeIf { it.isNotEmpty() }
+            keyLoadWarnings = loadedKeys.warnings
+            state.keysLoaded = true
+        }
+        uiState = uiState.copy(nfc = currentNfcAvailability())
 
         enableEdgeToEdge()
         setContent {
@@ -154,20 +134,23 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                 if (appScreen == AppScreen.DUMP) {
                     DumpScreen(
                         uiState = uiState,
+                        notice = notice,
+                        onNoticeShown = { notice = null },
                         onExportJson = { launchDumpExport() },
                         onOpenKeyManagement = { appScreen = AppScreen.KEY_MANAGEMENT },
+                        onOpenNfcSettings = { openNfcSettings() },
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
+                    BackHandler { appScreen = AppScreen.DUMP }
                     KeyManagementScreen(
                         state = KeyManagementState(
-                            status = uiState.status,
-                            keyFilePath = loadedKeyPath,
                             keyLoadWarnings = keyLoadWarnings,
-                            summary = buildKeyManagementSummary(keyStore),
                             entries = flattenPersistedKeys(keyStore),
                             isBusy = uiState.isReading,
                         ),
+                        notice = notice,
+                        onNoticeShown = { notice = null },
                         onBack = { appScreen = AppScreen.DUMP },
                         onImportKeys = { launchKeyImport() },
                         onExportKeys = { launchKeyExport() },
@@ -183,9 +166,9 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     override fun onResume() {
         super.onResume()
 
+        uiState = uiState.copy(nfc = currentNfcAvailability())
         val adapter = nfcAdapter ?: return
         if (!adapter.isEnabled) {
-            uiState = uiState.copy(status = "NFC is disabled. Enable NFC in settings.")
             return
         }
 
@@ -214,13 +197,10 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             return
         }
 
-        lifecycleScope.launch {
+        state.viewModelScope.launch {
             var readSucceeded = false
             try {
-                uiState = uiState.copy(
-                    status = "Reading...",
-                    isReading = true,
-                )
+                uiState = uiState.copy(isReading = true)
 
                 val result = withContext(Dispatchers.IO) {
                     runCatching { FelicaDumpEngine.dump(tag, keyStore) }
@@ -229,21 +209,15 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                 result.onSuccess { dump ->
                     readSucceeded = true
                     uiState = uiState.copy(
-                        status = "Read complete (${dump.systems.size} system)",
-                        dumpText = "Read result is shown. Use the save icon to export JSON.",
                         isReading = false,
                         dump = dump,
+                        readError = null,
                     )
                 }.onFailure { error ->
                     uiState = uiState.copy(
-                        status = "Read failed",
-                        dumpText = buildString {
-                            appendLine("Error: ${error.message ?: "unknown"}")
-                            appendLine()
-                            appendLine("Hold the NFC-F (FeliCa) card near the device again.")
-                        },
                         isReading = false,
                         dump = null,
+                        readError = error.message.orEmpty(),
                     )
                 }
             } finally {
@@ -259,38 +233,22 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
         }
     }
 
-    private fun initialStatusText(): String {
+    private fun currentNfcAvailability(): NfcAvailability {
         val adapter = nfcAdapter
         return when {
-            adapter == null -> "This device does not support NFC."
-            !adapter.isEnabled -> "NFC is disabled. Enable NFC in settings."
-            else -> "Hold an NFC-F card near the device."
+            adapter == null -> NfcAvailability.UNSUPPORTED
+            !adapter.isEnabled -> NfcAvailability.DISABLED
+            else -> NfcAvailability.AVAILABLE
         }
     }
 
-    private fun waitingText(): String {
-        return buildString {
-            appendLine("Waiting...")
-            appendLine()
-            if (loadedKeyPath != null && keyStore != null) {
-                appendLine("Authentication keys: ${keyStore!!.size} systems loaded")
-                appendLine("key file: $loadedKeyPath")
-            } else {
-                appendLine("Authentication keys: Not configured")
-                appendLine("Place keys.jsonl in one of the locations below to enable authenticated reads:")
-                appendLine("- ${File(filesDir, "keys.jsonl").absolutePath}")
-                getExternalFilesDir(null)?.let {
-                    appendLine("- ${File(it, "keys.jsonl").absolutePath}")
-                }
-            }
-            if (keyLoadWarnings.isNotEmpty()) {
-                appendLine()
-                appendLine("Key load warnings:")
-                keyLoadWarnings.forEach { warning ->
-                    appendLine("- $warning")
-                }
-            }
-        }
+    private fun openNfcSettings() {
+        runCatching { startActivity(Intent(Settings.ACTION_NFC_SETTINGS)) }
+            .recoverCatching { startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }
+    }
+
+    private fun showNotice(text: String) {
+        notice = Notice(id = SystemClock.elapsedRealtimeNanos(), text = text)
     }
 
     private fun loadKeyStore(): LoadedKeys {
@@ -302,7 +260,6 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             if (!file.exists()) {
                 continue
             }
-            loadedKeyPath = file.absolutePath
             return runCatching { FelicaDumpEngine.loadKeysFromJsonlFile(file) }
                 .getOrElse { error ->
                     LoadedKeys(
@@ -321,7 +278,6 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     private fun launchKeyExport() {
         val keys = keyStore
         if (keys.isNullOrEmpty()) {
-            uiState = uiState.copy(status = "No keys available to save.")
             return
         }
         pendingKeyExportJsonl = serializeKeysToJsonl(keys)
@@ -331,21 +287,18 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     private fun launchDumpExport() {
         val dump = uiState.dump
         if (dump == null) {
-            uiState = uiState.copy(status = "No dump available to save.")
             return
         }
-        pendingExportJson = gson.toJson(dump)
+        pendingExportJson = gson.toJson(dump.toDumpFile())
         exportDumpLauncher.launch("felica-dump-${dump.generatedAtEpochMs}.json")
     }
 
     private fun deletePersistedKey(entry: PersistedKeyEntry) {
         val currentKeys = keyStore
         if (currentKeys.isNullOrEmpty()) {
-            uiState = uiState.copy(status = "No key available to delete.")
             return
         }
-        lifecycleScope.launch {
-            uiState = uiState.copy(status = "Deleting key...")
+        state.viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val updated = removePersistedKey(currentKeys, entry)
@@ -356,27 +309,24 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             result.onSuccess { updated ->
                 keyStore = updated.takeIf { it.isNotEmpty() }
                 keyLoadWarnings = emptyList()
-                uiState = uiState.copy(status = "Key deleted.")
+                showNotice("Key deleted")
             }.onFailure { error ->
-                uiState =
-                    uiState.copy(status = "Failed to delete key: ${error.message ?: "unknown"}")
+                showNotice("Unable to delete the key. ${error.message.orEmpty()}".trim())
             }
         }
     }
 
     private fun deleteAllPersistedKeys() {
-        lifecycleScope.launch {
-            uiState = uiState.copy(status = "Deleting keys...")
+        state.viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching { persistKeyStore(emptyMap()) }
             }
             result.onSuccess {
                 keyStore = null
                 keyLoadWarnings = emptyList()
-                uiState = uiState.copy(status = "All keys deleted.")
+                showNotice("All keys deleted")
             }.onFailure { error ->
-                uiState =
-                    uiState.copy(status = "Failed to delete keys: ${error.message ?: "unknown"}")
+                showNotice("Unable to delete keys. ${error.message.orEmpty()}".trim())
             }
         }
     }
@@ -387,11 +337,9 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             if (destination.exists() && !destination.delete()) {
                 throw IOException("Failed to delete key file.")
             }
-            loadedKeyPath = null
             return
         }
         destination.writeText(serializeKeysToJsonl(keys), Charsets.UTF_8)
-        loadedKeyPath = destination.absolutePath
     }
 
     private fun removePersistedKey(keys: SystemKeys, entry: PersistedKeyEntry): SystemKeys {
@@ -448,22 +396,6 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                 .thenBy { it.idmHex }
                 .thenBy { it.nodeCode }
         )
-    }
-
-    private fun buildKeyManagementSummary(keys: SystemKeys?): KeyManagementSummary {
-        if (keys.isNullOrEmpty()) {
-            return KeyManagementSummary(0, 0, 0)
-        }
-        val systems = keys.size
-        var idmScopes = 0
-        var totalKeys = 0
-        keys.forEach { (_, idmScoped) ->
-            idmScopes += idmScoped.size
-            idmScoped.forEach { (_, nodeKeys) ->
-                totalKeys += nodeKeys.size
-            }
-        }
-        return KeyManagementSummary(systems, idmScopes, totalKeys)
     }
 
     private fun serializeKeysToJsonl(keys: SystemKeys): String {
@@ -536,7 +468,7 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
         val destination = File(filesDir, "keys.jsonl")
         val temp = File(filesDir, "keys.jsonl.tmp")
 
-        contentResolver.openInputStream(uri)?.use { input ->
+        applicationContext.contentResolver.openInputStream(uri)?.use { input ->
             temp.outputStream().use { output ->
                 input.copyTo(output)
             }
@@ -547,7 +479,6 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             temp.delete()
         }
 
-        loadedKeyPath = destination.absolutePath
         return FelicaDumpEngine.loadKeysFromJsonlFile(destination)
     }
 
@@ -566,7 +497,7 @@ class MainActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
 
     @Throws(IOException::class)
     private fun exportDumpJson(uri: Uri, json: String): String {
-        contentResolver.openOutputStream(uri)?.use { output ->
+        applicationContext.contentResolver.openOutputStream(uri)?.use { output ->
             output.write(json.toByteArray(Charsets.UTF_8))
             output.flush()
         } ?: throw IOException("Unable to open the selected destination.")

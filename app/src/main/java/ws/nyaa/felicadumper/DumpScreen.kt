@@ -5,30 +5,42 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.VpnKey
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import ws.nyaa.felicadumper.ui.theme.FeliCaDumperTheme
@@ -37,12 +49,19 @@ import ws.nyaa.felicadumper.ui.theme.FeliCaDumperTheme
 @Composable
 internal fun DumpScreen(
     uiState: DumpUiState,
+    notice: Notice?,
+    onNoticeShown: () -> Unit,
     onExportJson: () -> Unit,
     onOpenKeyManagement: () -> Unit,
+    onOpenNfcSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    NoticeEffect(notice, snackbarHostState, onNoticeShown)
+
     Scaffold(
         modifier = modifier,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -58,7 +77,7 @@ internal fun DumpScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Save,
-                            contentDescription = "Save JSON",
+                            contentDescription = "Save dump as JSON",
                         )
                     }
                     IconButton(
@@ -77,119 +96,131 @@ internal fun DumpScreen(
             )
         },
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(innerPadding),
         ) {
-            StatusCard(
-                status = uiState.status,
-                isReading = uiState.isReading,
-            )
+            if (uiState.dump != null) {
+                DumpHierarchyView(
+                    dump = uiState.dump,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                EmptyState(
+                    uiState = uiState,
+                    onOpenNfcSettings = onOpenNfcSettings,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
 
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (uiState.dump != null) {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        tonalElevation = 2.dp,
-                        shape = RoundedCornerShape(14.dp),
-                    ) {
-                        DumpHierarchyView(
-                            dump = uiState.dump,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(12.dp),
-                        )
-                    }
-                } else {
-                    WaitingGuide(
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-
-                if (uiState.isReading) {
-                    ReadingOverlay()
-                }
+            if (uiState.isReading) {
+                ReadingOverlay()
             }
         }
     }
 }
 
 @Composable
-private fun StatusCard(
-    status: String,
-    isReading: Boolean,
+internal fun NoticeEffect(
+    notice: Notice?,
+    snackbarHostState: SnackbarHostState,
+    onNoticeShown: () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-        shape = RoundedCornerShape(12.dp),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = status,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            if (isReading) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "Keep the card still.",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+    LaunchedEffect(notice?.id) {
+        if (notice != null) {
+            snackbarHostState.showSnackbar(notice.text)
+            onNoticeShown()
         }
     }
 }
 
 @Composable
-private fun WaitingGuide(modifier: Modifier = Modifier) {
+private fun EmptyState(
+    uiState: DumpUiState,
+    onOpenNfcSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    when {
+        uiState.nfc == NfcAvailability.UNSUPPORTED -> CenteredMessage(
+            icon = Icons.Default.Nfc,
+            title = "This device doesn’t support NFC",
+            modifier = modifier,
+        )
+
+        uiState.nfc == NfcAvailability.DISABLED -> CenteredMessage(
+            icon = Icons.Default.Nfc,
+            title = "NFC is off",
+            modifier = modifier,
+        ) {
+            Button(onClick = onOpenNfcSettings) {
+                Text("Open NFC settings")
+            }
+        }
+
+        uiState.readError != null -> CenteredMessage(
+            icon = Icons.Default.ErrorOutline,
+            iconTint = MaterialTheme.colorScheme.error,
+            title = "Unable to read the card",
+            body = listOf(
+                uiState.readError,
+                "Hold the card near the device again.",
+            ).filter { it.isNotBlank() }.joinToString("\n"),
+            modifier = modifier,
+        )
+
+        else -> CenteredMessage(
+            icon = Icons.Default.Nfc,
+            title = "Hold a FeliCa card near the device",
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun CenteredMessage(
+    icon: ImageVector,
+    title: String,
+    modifier: Modifier = Modifier,
+    iconTint: Color = MaterialTheme.colorScheme.primary,
+    body: String? = null,
+    action: (@Composable () -> Unit)? = null,
+) {
     Box(
         modifier = modifier.padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .widthIn(max = 360.dp)
+                .semantics { liveRegion = LiveRegionMode.Polite },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Icon(
-                imageVector = Icons.Default.Memory,
+                imageVector = icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = iconTint,
+                modifier = Modifier.size(48.dp),
             )
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Hold an NFC-F card near the device",
+                text = title,
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                textAlign = TextAlign.Center,
             )
-            Text(
-                text = "The system/area/service hierarchy appears after reading.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            body?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+            action?.let {
+                Spacer(modifier = Modifier.height(24.dp))
+                it()
+            }
         }
     }
 }
@@ -203,18 +234,23 @@ private fun ReadingOverlay() {
         contentAlignment = Alignment.Center,
     ) {
         Surface(
-            shape = RoundedCornerShape(14.dp),
+            shape = MaterialTheme.shapes.large,
             tonalElevation = 6.dp,
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                modifier = Modifier
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                CircularProgressIndicator(strokeWidth = 2.dp)
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp,
+                )
                 Text(
-                    text = "Reading...",
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "Keep the card still",
+                    style = MaterialTheme.typography.bodyLarge,
                 )
             }
         }
@@ -227,13 +263,16 @@ private fun DumpScreenPreview() {
     FeliCaDumperTheme {
         DumpScreen(
             uiState = DumpUiState(
-                status = "Hold an NFC-F card near the device.",
-                dumpText = "{\n  \"systems\": []\n}",
+                nfc = NfcAvailability.AVAILABLE,
                 isReading = false,
                 dump = null,
+                readError = null,
             ),
+            notice = null,
+            onNoticeShown = {},
             onExportJson = {},
             onOpenKeyManagement = {},
+            onOpenNfcSettings = {},
         )
     }
 }

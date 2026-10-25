@@ -5,11 +5,22 @@ internal enum class AppScreen {
     KEY_MANAGEMENT,
 }
 
+internal enum class NfcAvailability {
+    AVAILABLE,
+    DISABLED,
+    UNSUPPORTED,
+}
+
 internal data class DumpUiState(
-    val status: String,
-    val dumpText: String,
+    val nfc: NfcAvailability,
     val isReading: Boolean,
     val dump: DumpOutput?,
+    val readError: String?,
+)
+
+internal data class Notice(
+    val id: Long,
+    val text: String,
 )
 
 internal data class KeyJsonlRecord(
